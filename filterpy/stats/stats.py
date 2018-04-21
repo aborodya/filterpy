@@ -24,6 +24,7 @@ from math import cos, sin
 from matplotlib.patches import Ellipse
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.linalg import inv
 import random
 import scipy.linalg as linalg
 import scipy.sparse as sp
@@ -43,7 +44,78 @@ except:
 
 
 
-def logpdf(x, mean, cov, allow_singular=True):
+def _validate_vector(u, dtype=None):
+    # this is taken from scipy.spatial.distance. Internal function, so
+    # redefining here.
+
+    u = np.asarray(u, dtype=dtype).squeeze()
+    # Ensure values such as u=1 and u=[1] still return 1-D arrays.
+    u = np.atleast_1d(u)
+    if u.ndim > 1:
+        raise ValueError("Input vector should be 1-D.")
+    return u
+
+
+def mahalanobis(x, mean, cov):
+    """ Computes the Mahalanobis distance between the state vector x from the
+    Gaussian  `mean` with covariance `cov`.
+
+
+    Parameters
+    ----------
+    x : (N,) array_like
+        Input state vector
+    mean : (N,) array_like
+        mean of multivariate Gaussian
+    cov : ndarray
+        covariance of the multivariate Gaussian
+
+
+    Returns
+    -------
+    mahalanobis : double
+        The Mahalanobis distance between vectors `x` and `mean`
+
+
+    Examples
+    --------
+    >>> mahalanobis(x=3., mean=3.5, cov=4.**2) # univariate case
+    0.125
+    >>> mahalanobis([1., 2], [1.1, 3.5], [[1., .1],[.1, 13]])
+    0.42533327058913922
+    """
+
+    x = _validate_vector(x)
+    mean = _validate_vector(mean)
+
+    if x.shape != mean.shape:
+        raise ValueError("length of input vectors must be the same")
+
+    y = x - mean
+    S = np.atleast_2d(cov)
+
+    # residual y is now 1D, so no need to transpose, and y @S^ @ y is a scalar
+    # so no array indexing required to get result
+    dist = np.dot(y, inv(S)).dot(y)
+    return np.sqrt(dist)
+
+
+def log_likelihood(z, x, P, H, R):
+    """Returns log-likelihood of the measurement z given the Gaussian
+    posterior (x, P) using measurement function H and measurement
+    covariance error R"""
+    S = np.dot(H, np.dot(P, H.T)) + R
+    return logpdf(z, np.dot(H, x), S)
+
+
+def likelihood(z, x, P, H, R):
+    """Returns likelihood of the measurement z given the Gaussian
+    posterior (x, P) using measurement function H and measurement
+    covariance error R"""
+    return np.exp(log_likelihood(z, x, P, H, R))
+
+
+def logpdf(x, mean=None, cov=1, allow_singular=True):
     """Computes the log of the probability density function of the normal
     N(mean, cov) for the data x. The normal may be univariate or multivariate.
 
@@ -56,7 +128,11 @@ def logpdf(x, mean, cov, allow_singular=True):
     `x` and `mean` may be column vectors, row vectors, or lists.
     """
 
-    flat_mean = np.asarray(mean).flatten()
+    if mean is not None:
+        flat_mean = np.asarray(mean).flatten()
+    else:
+        flat_mean = None
+
     flat_x = np.asarray(x).flatten()
 
     if _support_singular:
@@ -740,6 +816,8 @@ def NESS(xs, est_xs, ps):
     for x, p in zip(est_err, ps):
         ness.append(np.dot(x.T, linalg.inv(p)).dot(x))
     return ness
+
+
 
 
 if __name__ == '__main__':

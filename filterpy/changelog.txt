@@ -1,3 +1,42 @@
+Version 1.2.4
+=============
+
+* BUG: UKF smoother had an important bug in it. DO NOT use the rts_smoother
+prior to this release! GitHub issue #97
+
+* Added jerk option to the computation of Q. GitHub issue #83
+
+
+Version 1.2.3
+=============
+* I pushed a broken version! This should fix that. Do not use 1.2.2.
+
+* This push sucks in some minor documentation and PEP8 changes to a few files.
+
+Version 1.2.2
+=============
+
+* changes log-likelihood and likelihood back into attributes/properties
+and added to several classes so the IMM code works uniformally across all
+
+* bug fix in gh code that ignored k (submitted by Lucal Beyer)
+
+* doc block fix by Andriy Teraz
+
+
+Version 1.2.0
+=============
+
+* Added computation of mahalanobis distance in stats
+* Added better default values for F and H in KalmanFilter
+* Fixed bugs due to calling .dot on float64 values
+* Removed all of the getter/setters as unpythonic
+* added function to create kinematic filters
+* changed log likelihood and likelihood to methods to avoid the
+  slow computation it requires.
+* Improved documentation of method parameters
+
+
 Version 1.1.0
 =============
 * fixed bug in likelihood to never return 0, which can happen

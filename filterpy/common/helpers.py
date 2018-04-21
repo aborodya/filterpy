@@ -15,9 +15,6 @@ This is licensed under an MIT license. See the readme.MD file
 for more information.
 """
 
-#
-from numpy import array, asarray, isscalar, eye, dot
-from functools import reduce
 
 
 def runge_kutta4(y, x, dx, f):
@@ -44,4 +41,5 @@ def runge_kutta4(y, x, dx, f):
     k4 = dx * f(y + k3, x + dx)
 
     return y + (k1 + 2*k2 + 2*k3 + k4) / 6.
+
 

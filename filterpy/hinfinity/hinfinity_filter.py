@@ -18,72 +18,88 @@ from __future__ import absolute_import, division
 import numpy as np
 from numpy import dot, zeros, eye
 import scipy.linalg as linalg
+import warnings
 
 
 class HInfinityFilter(object):
+    """
+    .. warning::
+        I do not believe this code is correct. DO NOT USE THIS.
+        In particular, note that predict does not update the covariance
+        matrix.
+
+    H-Infinity filter. You are responsible for setting the
+    various state variables to reasonable values; the defaults below will
+    not give you a functional filter.
+
+
+    Parameters
+    ----------
+
+    dim_x : int
+        Number of state variables for the Kalman filter. For example, if
+        you are tracking the position and velocity of an object in two
+        dimensions, dim_x would be 4.
+
+        This is used to set the default size of `P`, `Q`, and `u`
+
+    dim_z : int
+        Number of of measurement inputs. For example, if the sensor
+        provides you with position in (x, y), `dim_z` would be 2.
+
+    dim_u : int
+        Number of control inputs for the Gu part of the prediction step.
+        
+    gamma : float
+    """
+
 
     def __init__(self, dim_x, dim_z, dim_u, gamma):
-        """ Create an H-Infinity filter. You are responsible for setting the
-        various state variables to reasonable values; the defaults below will
-        not give you a functional filter.
 
-        Parameters
-        ----------
+        warnings.warn("This code is likely incorrect. DO NOT USE.",
+                      DeprecationWarning)
 
-        dim_x : int
-            Number of state variables for the Kalman filter. For example, if
-            you are tracking the position and velocity of an object in two
-            dimensions, dim_x would be 4.
-
-            This is used to set the default size of P, Q, and u
-
-        dim_z : int
-            Number of of measurement inputs. For example, if the sensor
-            provides you with position in (x,y), dim_z would be 2.
-
-        dim_u : int
-            Number of control inputs for the Gu part of the prediction step.
-        """
 
         self.dim_x = dim_x
         self.dim_z = dim_z
         self.dim_u = dim_u
         self.gamma = gamma
 
-        self.x = zeros((dim_x,1)) # state
+        self.x = zeros((dim_x, 1)) # state
 
-        self.G = 0                # control transistion matrx
+        self.B = 0                # control transition matrix
         self.F = 0                # state transition matrix
         self.H = 0                # Measurement function
+        self.P = eye(dim_x)       # Uncertainty covariance.
+        self.Q = eye(dim_x)
 
-        self.P = eye(dim_x)       # uncertainty covariance
-        self._V_inv = zeros((dim_z, dim_z))
-        self.W = zeros((dim_x, dim_x))
-        self.Q = eye(dim_x)       # process uncertainty
+        self._V_inv = zeros((dim_z, dim_z)) # inverse measurement noise
+        self.W = zeros((dim_x, dim_x))      # process uncertainty
 
         # gain and residual are computed during the innovation step. We
         # save them so that in case you want to inspect them for various
         # purposes
-        self.K = 0 # kalman gain
+
+        self.K = 0 # H-infinity gain
         self.residual = zeros((dim_z, 1))
 
         # identity matrix. Do not alter this.
         self._I = np.eye(dim_x)
 
 
-    def update(self, Z):
+    def update(self, z):
         """
-        Add a new measurement (Z) to the kalman filter. If Z is None, nothing
+        Add a new measurement `z` to the H-Infinity filter. If `z` is None, nothing
         is changed.
 
         Parameters
         ----------
 
-        Z : np.array
+        z : ndarray
             measurement for this update.
         """
 
-        if Z is None:
+        if z is None:
             return
 
         # rename for readability and a tiny extra bit of speed
@@ -102,29 +118,20 @@ class HInfinityFilter(object):
 
         L = linalg.inv(I - gamma * dot(Q, P) + dot(HTVI, H).dot(P))
 
-        #common subexpression P*L
+        # common subexpression P*L
         PL = dot(P, L)
 
         K = dot(F, PL).dot(HTVI)
 
-        self.residual = Z - dot(H, x)
+        self.residual = z - dot(H, x)
 
         # x = x + Ky
-        # predict new x with residual scaled by the kalman gain
+        # predict new x with residual scaled by the H-Infinity gain
         self.x = self.x + dot(K, self.residual)
         self.P = dot(F, PL).dot(F.T) + W
 
         # force P to be symmetric
         self.P = (self.P + self.P.T) / 2
-
-
-    '''def update_safe(self, Z):
-        """ same as update(), except we perform a check to ensure that the
-        eigenvalues are < 1. An exception is thrown if not. """
-
-        update(Z)
-        evalue = linalg.eig(self.P)'
-    '''
 
 
     def predict(self, u=0):
@@ -133,13 +140,13 @@ class HInfinityFilter(object):
         Parameters
         ----------
 
-        u : np.array
-            Optional control vector. If non-zero, it is multiplied by G
+        u : ndarray
+            Optional control vector. If non-zero, it is multiplied by `B`
             to create the control input into the system.
         """
 
-        # x = Fx + Gu
-        self.x = dot(self.F, self.x) + dot(self.G, u)
+        # x = Fx + Bu
+        self.x = dot(self.F, self.x) + dot(self.B, u)
 
 
     def batch_filter(self, Zs, Rs=None, update_first=False):
@@ -164,38 +171,38 @@ class HInfinityFilter(object):
         Returns
         -------
 
-        means: np.array((n,dim_x,1))
+        means: ndarray ((n, dim_x, 1))
             array of the state for each time step. Each entry is an np.array.
             In other words `means[k,:]` is the state at step `k`.
 
-        covariance: np.array((n,dim_x,dim_x))
+        covariance: ndarray((n, dim_x, dim_x))
             array of the covariances for each time step. In other words
-            `covariance[k,:,:]` is the covariance at step `k`.
+            `covariance[k, :, :]` is the covariance at step `k`.
         """
 
-        n = np.size(Zs,0)
+        n = np.size(Zs, 0)
         if Rs is None:
-            Rs = [None]*n
+            Rs = [None] * n
 
-        # mean estimates from Kalman Filter
-        means = zeros((n,self.dim_x,1))
+        # mean estimates from H-Infinity Filter
+        means = zeros((n, self.dim_x, 1))
 
-        # state covariances from Kalman Filter
-        covariances = zeros((n,self.dim_x,self.dim_x))
+        # state covariances from H-Infinity Filter
+        covariances = zeros((n, self.dim_x, self.dim_x))
 
         if update_first:
-            for i,(z,r) in enumerate(zip(Zs,Rs)):
+            for i, (z, r) in enumerate(zip(Zs, Rs)):
                 self.update(z,r)
-                means[i,:] = self.x
-                covariances[i,:,:] = self.P
+                means[i, :] = self.x
+                covariances[i, :, :] = self.P
                 self.predict()
         else:
-            for i,(z,r) in enumerate(zip(Zs,Rs)):
+            for i, (z, r) in enumerate(zip(Zs, Rs)):
                 self.predict()
-                self.update(z,r)
+                self.update(z, r)
 
-                means[i,:] = self.x
-                covariances[i,:,:] = self.P
+                means[i, :] = self.x
+                covariances[i, :, :] = self.P
 
         return (means, covariances)
 
@@ -207,17 +214,17 @@ class HInfinityFilter(object):
         Parameters
         ----------
 
-        u : np.array
+        u : ndarray
             optional control input
 
         Returns
         -------
 
-        x : numpy.ndarray
-            State vecto of the prediction.
+        x : ndarray
+            State vector of the prediction.
         """
 
-        x = dot(self.F, self.x) + dot(self.G, u)
+        x = dot(self.F, self.x) + dot(self.B, u)
         return x
 
 
@@ -234,13 +241,13 @@ class HInfinityFilter(object):
         Parameters
         ----------
 
-        x : np.array
-            kalman state vector
+        x : ndarray
+            H-Infinity state vector
 
         Returns
         -------
 
-        z : np.array
+        z : ndarray
             measurement corresponding to the given state
         """
         return dot(self.H, x)
@@ -258,4 +265,3 @@ class HInfinityFilter(object):
         else:
             self._V = value
         self._V_inv = linalg.inv(self._V)
-

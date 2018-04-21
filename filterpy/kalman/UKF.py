@@ -20,8 +20,10 @@ import math
 import numpy as np
 from numpy import eye, zeros, dot, isscalar, outer
 from scipy.linalg import inv, cholesky
+import sys
 from filterpy.kalman import unscented_transform
 from filterpy.stats import logpdf
+
 
 class UnscentedKalmanFilter(object):
     # pylint: disable=too-many-instance-attributes
@@ -49,13 +51,6 @@ class UnscentedKalmanFilter(object):
     Q : numpy.array(dim_x, dim_x)
         process noise matrix
 
-
-    You may read the following attributes.
-
-    Readable Attributes
-    -------------------
-
-
     K : numpy.array
         Kalman gain
 
@@ -67,9 +62,6 @@ class UnscentedKalmanFilter(object):
 
     P : numpy.array(dim_x, dim_x)
         predicted/updated covariance matrix (result of predict()/update())
-
-    likelihood : scalar
-        Likelihood of last measurement update.
 
     log_likelihood : scalar
         Log likelihood of last measurement update.
@@ -103,8 +95,9 @@ class UnscentedKalmanFilter(object):
     def __init__(self, dim_x, dim_z, dt, hx, fx, points,
                  sqrt_fn=None, x_mean_fn=None, z_mean_fn=None,
                  residual_x=None,
-                 residual_z=None):
-        r""" Create a Kalman filter. You are responsible for setting the
+                 residual_z=None,
+                 compute_log_likelihood=True):
+        """ Create a Kalman filter. You are responsible for setting the
         various state variables to reasonable values; the defaults below will
         not give you a functional filter.
 
@@ -199,6 +192,10 @@ class UnscentedKalmanFilter(object):
                         y = 2*np.pi
                     return y
 
+        compute_log_likelihood : bool (default = True)
+            Computes log likelihood by default, but this can be a slow
+            computation, so if you never use it you can turn this computation
+            off.
 
         References
         ----------
@@ -234,7 +231,9 @@ class UnscentedKalmanFilter(object):
         self.fx = fx
         self.x_mean = x_mean_fn
         self.z_mean = z_mean_fn
-        self.log_likelihood = 0.0
+
+        self.compute_log_likelihood = compute_log_likelihood
+        self.log_likelihood = math.log(sys.float_info.min)
 
         if sqrt_fn is None:
             self.msqrt = cholesky
@@ -296,13 +295,12 @@ class UnscentedKalmanFilter(object):
             UT = unscented_transform
 
         # calculate sigma points for given mean and covariance
-        sigmas = self.points_fn.sigma_points(self.x, self.P)
+        self.compute_process_sigmas(dt, *fx_args)
 
-        for i in range(self._num_sigmas):
-            self.sigmas_f[i] = self.fx(sigmas[i], dt, *fx_args)
-
+        #and pass sigmas through the unscented transform
         self.x, self.P = UT(self.sigmas_f, self.Wm, self.Wc, self.Q,
                             self.x_mean, self.residual_x)
+
 
 
     def update(self, z, R=None, UT=None, hx_args=()):
@@ -344,41 +342,74 @@ class UnscentedKalmanFilter(object):
         elif isscalar(R):
             R = eye(self._dim_z) * R
 
-        for i in range(self._num_sigmas):
-            self.sigmas_h[i] = self.hx(self.sigmas_f[i], *hx_args)
+        for i, s in enumerate(self.sigmas_f):
+            self.sigmas_h[i] = self.hx(s, *hx_args)
 
         # mean and covariance of prediction passed through unscented transform
         zp, Pz = UT(self.sigmas_h, self.Wm, self.Wc, R, self.z_mean, self.residual_z)
 
         # compute cross variance of the state and the measurements
-        Pxz = zeros((self._dim_x, self._dim_z))
-        for i in range(self._num_sigmas):
-            dx = self.residual_x(self.sigmas_f[i], self.x)
-            dz =  self.residual_z(self.sigmas_h[i], zp)
-            Pxz += self.Wc[i] * outer(dx, dz)
+        Pxz = self.cross_variance(self.x, zp, self.sigmas_f, self.sigmas_h)
 
 
         self.K = dot(Pxz, inv(Pz))        # Kalman gain
         self.y = self.residual_z(z, zp)   # residual
 
+        # update Gaussian state estimate (x, P)
         self.x = self.x + dot(self.K, self.y)
-        self.P = self.P - dot(self.K, Pz).dot(self.K.T)
+        self.P = self.P - dot(self.K, dot(Pz, self.K.T))
 
-        self.log_likelihood = logpdf(self.y, np.zeros(len(self.y)), Pz)
+        if self.compute_log_likelihood:
+            self.log_likelihood = logpdf(x=self.y, cov=Pz)
 
 
     def cross_variance(self, x, z, sigmas_f, sigmas_h):
+        """
+        Compute cross variance of the state `x` and measurement `z`.
+        """
+
         Pxz = zeros((sigmas_f.shape[1], sigmas_h.shape[1]))
         N = sigmas_f.shape[0]
         for i in range(N):
             dx = self.residual_x(sigmas_f[i], x)
             dz =  self.residual_z(sigmas_h[i], z)
             Pxz += self.Wc[i] * outer(dx, dz)
+        return Pxz
+
+
+    def compute_process_sigmas(self, dt, *fx_args):
+        """
+        computes the values of sigmas_f. Normally a user would not call
+        this, but it is useful if you need to call update more than once
+        between calls to predict (to update for multiple simultaneous
+        measurements), so the sigmas correctly reflect the updated state
+        x, P.
+        """
+        # calculate sigma points for given mean and covariance
+        sigmas = self.points_fn.sigma_points(self.x, self.P)
+
+        for i, s in enumerate(sigmas):
+            self.sigmas_f[i] = self.fx(s, dt, *fx_args)
 
 
     @property
     def likelihood(self):
-        return math.exp(self.log_likelihood)
+        """
+        likelihood of last measurment.
+
+        Computed from the log-likelihood. The log-likelihood can be very
+        small,  meaning a large negative value such as -28000. Taking the
+        exp() of that results in 0.0, which can break typical algorithms
+        which multiply by this value, so by default we always return a
+        number >= sys.float_info.min.
+
+        But really, this is a bad measure because of the scaling that is
+        involved - try to use log-likelihood in your equations!"""
+
+        lh = math.exp(self.log_likelihood)
+        if lh == 0:
+             lh = sys.float_info.min
+        return lh
 
 
     def batch_filter(self, zs, Rs=None, UT=None):
@@ -510,33 +541,28 @@ class UnscentedKalmanFilter(object):
             Qs = [self.Q] * n
 
         # smoother gain
-        Ks = zeros((n,dim_x,dim_x))
+        Ks = zeros((n, dim_x, dim_x))
 
         num_sigmas = self._num_sigmas
 
         xs, ps = Xs.copy(), Ps.copy()
         sigmas_f = zeros((num_sigmas, dim_x))
 
-        for k in range(n-2,-1,-1):
+        for k in reversed(range(n-1)):
             # create sigma points from state estimate, pass through state func
             sigmas = self.points_fn.sigma_points(xs[k], ps[k])
             for i in range(num_sigmas):
                 sigmas_f[i] = self.fx(sigmas[i], dt[k])
 
-            # compute backwards prior state and covariance
-            xb = dot(self.Wm, sigmas_f)
-            Pb = 0
-            x = Xs[k]
-            for i in range(num_sigmas):
-                y = self.residual_x(sigmas_f[i], x)
-                Pb += self.Wc[i] * outer(y, y)
-            Pb += Qs[k]
+            xb, Pb = unscented_transform(
+                    sigmas_f, self.Wm, self.Wc, self.Q,
+                    self.x_mean, self.residual_x)
 
             # compute cross variance
             Pxb = 0
             for i in range(num_sigmas):
-                z = self.residual_x(sigmas[i], Xs[k])
                 y = self.residual_x(sigmas_f[i], xb)
+                z = self.residual_x(sigmas[i], Xs[k])
                 Pxb += self.Wc[i] * outer(z, y)
 
             # compute gain

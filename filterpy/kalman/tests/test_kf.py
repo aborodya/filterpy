@@ -14,15 +14,15 @@ This is licensed under an MIT license. See the readme.MD file
 for more information.
 """
 
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
+from __future__ import absolute_import, division, print_function
+
 
 import numpy.random as random
 from numpy.random import randn
 import numpy as np
 import matplotlib.pyplot as plt
-from filterpy.kalman import *
-from filterpy.common import Q_discrete_white_noise
+from filterpy.kalman import KalmanFilter, update, predict, batch_filter
+from filterpy.common import Q_discrete_white_noise, kinematic_kf
 from scipy.linalg import block_diag, norm
 
 DO_PLOT = False
@@ -264,7 +264,6 @@ def test_univariate():
     f = KalmanFilter(dim_x=1, dim_z=1, dim_u=1)
     f.x = np.array([[0]])
     f.P *= 50
-    print(f.P)
     f.H = np.array([[1.]])
     f.F = np.array([[1.]])
     f.B = np.array([[1.]])
@@ -328,6 +327,22 @@ def test_procedure_form():
         plt.plot(measurements)
 
 
+def test_steadystate():
+
+    dim = 7
+
+    cv = kinematic_kf(dim=dim, order=5)
+
+    cv.x[1] = 1.0
+
+    for i in range(100):
+        cv.predict()
+        cv.update([i]*dim)
+
+
+    for i in range(100):
+        cv.predict_steadystate()
+        cv.update_steadystate([i]*dim)
 
 def test_procedural_batch_filter():
     f = KalmanFilter (dim_x=2, dim_z=1)
@@ -537,11 +552,88 @@ def test_z_dim():
         f.x = np.array([[1,2,3,4.]]).T
 
 
+def test_default_dims():
+    kf = KalmanFilter(dim_x=3, dim_z=1)
+    kf.predict()
+    kf.update(np.array([[1.]]).T)
+
+
+def test_functions():
+
+    x, P = predict(x=10., P=3., u=1., Q=2.**2)
+    x, P = update(x=x, P=P, z=12., R=3.5**2)
+
+
+
+    x, P = predict(x=np.array([10.]), P=np.array([[3.]]), Q=2.**2)
+    x, P = update(x=x, P=P, z=12., H=np.array([[1.]]), R=np.array([[3.5**2]]))
+
+
+    x = np.array([1., 0])
+    P = np.diag([1., 1])
+    Q = np.diag([0., 0])
+    H = np.array([[1., 0]])
+
+    x, P = predict(x=x, P=P, Q=Q)
+
+    assert x.shape == (2,)
+    assert P.shape == (2,2)
+
+    x, P = update(x, P, z=[1], R=np.array([[1.]]), H=H)
+
+    assert x[0] == 1 and x[1] == 0
+
+
+    # test velocity predictions
+    x, P = predict(x=x, P=P, Q=Q)
+    assert x[0] == 1 and x[1] == 0
+
+    x[1] = 1.
+    F = np.array([[1., 1], [0, 1]])
+
+    x, P = predict(x=x, F=F, P=P, Q=Q)
+    assert x[0] == 2 and x[1] == 1
+
+    x, P = predict(x=x, F=F, P=P, Q=Q)
+    assert x[0] == 3 and x[1] == 1
+
+
+
+
+
+def test_z_checks():
+
+    kf = KalmanFilter(dim_x=3, dim_z=1)
+    kf.update(3.)
+    kf.update([3])
+    kf.update((3))
+    kf.update([[3]])
+    kf.update(np.array([[3]]))
+
+    try:
+        kf.update([[3, 3]])
+        assert False, "accepted bad z shape"
+    except ValueError:
+        pass
+
+    kf = KalmanFilter(dim_x=3, dim_z=2)
+    kf.update([3, 4])
+    kf.update([[3, 4]])
+
+    kf.update(np.array([[3, 4]]))
+    kf.update(np.array([[3, 4]]).T)
+
+
+
+
 if __name__ == "__main__":
     DO_PLOT = True
-    #test_z_dim()
-    #test_batch_filter()
+    test_functions()
+    test_default_dims()
+    test_z_checks()
+    test_z_dim()
+    test_batch_filter()
     test_procedural_batch_filter()
 
-    #test_univariate()
-    #test_noisy_11d()
+    test_univariate()
+    test_noisy_11d()
