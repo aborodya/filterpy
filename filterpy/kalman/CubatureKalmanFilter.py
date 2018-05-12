@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=invalid-name, too-many-arguments
+
+
 """Copyright 2016 Roger R Labbe Jr.
 
 FilterPy library.
@@ -18,11 +21,12 @@ from __future__ import (absolute_import, division)
 
 import math
 from math import sqrt
+import sys
 import numpy as np
 from numpy import eye, zeros, dot, isscalar, outer
 from scipy.linalg import inv, cholesky
-import sys
 from filterpy.stats import logpdf
+from filterpy.common import pretty_str
 
 
 def spherical_radial_sigmas(x, P):
@@ -51,13 +55,34 @@ def spherical_radial_sigmas(x, P):
     sigmas = np.empty((2*n, n))
     U = cholesky(P) * sqrt(n)
     for k in range(n):
-        sigmas[k]   = x + U[k]
+        sigmas[k] = x + U[k]
         sigmas[n+k] = x - U[k]
 
     return sigmas
 
 
 def ckf_transform(Xs, Q):
+    """
+    Compute mean and covariance of array of cubature points.
+
+    Parameters
+    ----------
+
+    Xs : ndarray
+        Cubature points
+
+    Q : ndarray
+        Noise covariance
+
+    Returns
+    -------
+
+    mean : ndarray
+         mean of the cubature points
+
+    variance: ndarray
+         covariance matrix of the cubature points
+    """
 
     m, n = Xs.shape
 
@@ -84,6 +109,78 @@ class CubatureKalmanFilter(object):
     You will have to set the following attributes after constructing this
     object for the filter to perform properly.
 
+
+    Parameters
+    ----------
+
+    dim_x : int
+        Number of state variables for the filter. For example, if
+        you are tracking the position and velocity of an object in two
+        dimensions, dim_x would be 4.
+
+
+    dim_z : int
+        Number of of measurement inputs. For example, if the sensor
+        provides you with position in (x,y), dim_z would be 2.
+
+    dt : float
+        Time between steps in seconds.
+
+    hx : function(x)
+        Measurement function. Converts state vector x into a measurement
+        vector of shape (dim_z).
+
+    fx : function(x, dt)
+        function that returns the state x transformed by the
+        state transistion function. dt is the time step in seconds.
+
+    x_mean_fn : callable  (sigma_points, weights), optional
+        Function that computes the mean of the provided sigma points
+        and weights. Use this if your state variable contains nonlinear
+        values such as angles which cannot be summed.
+
+        .. code-block:: Python
+
+            def state_mean(sigmas, Wm):
+                x = np.zeros(3)
+                sum_sin, sum_cos = 0., 0.
+
+                for i in range(len(sigmas)):
+                    s = sigmas[i]
+                    x[0] += s[0] * Wm[i]
+                    x[1] += s[1] * Wm[i]
+                    sum_sin += sin(s[2])*Wm[i]
+                    sum_cos += cos(s[2])*Wm[i]
+                x[2] = atan2(sum_sin, sum_cos)
+                return x
+
+    z_mean_fn : callable  (sigma_points, weights), optional
+        Same as x_mean_fn, except it is called for sigma points which
+        form the measurements after being passed through hx().
+
+    residual_x : callable (x, y), optional
+    residual_z : callable (x, y), optional
+        Function that computes the residual (difference) between x and y.
+        You will have to supply this if your state variable cannot support
+        subtraction, such as angles (359-1 degreees is 2, not 358). x and y
+        are state vectors, not scalars. One is for the state variable,
+        the other is for the measurement state.
+
+        .. code-block:: Python
+
+            def residual(a, b):
+                y = a[0] - b[0]
+                if y > np.pi:
+                    y -= 2*np.pi
+                if y < -np.pi:
+                    y = 2*np.pi
+                return y
+
+    compute_log_likelihood : bool (default = True)
+        Computes log likelihood by default, but this can be a slow
+        computation, so if you never use it you can turn this computation
+        off.
+
     Attributes
     ----------
 
@@ -108,6 +205,14 @@ class CubatureKalmanFilter(object):
     log_likelihood : float
         log-likelihood of the last measurement. Read only.
 
+    likelihood : float
+        likelihood of last measurment. Read only.
+
+        Computed from the log-likelihood. The log-likelihood can be very
+        small,  meaning a large negative value such as -28000. Taking the
+        exp() of that results in 0.0, which can break typical algorithms
+        which multiply by this value, so by default we always return a
+        number >= sys.float_info.min.
 
     References
     ----------
@@ -124,86 +229,11 @@ class CubatureKalmanFilter(object):
                  residual_z=None,
                  compute_log_likelihood=True):
 
-        r""" Create a Cubature Kalman filter. You are responsible for setting
-        the various state variables to reasonable values; the defaults will
-        not give you a functional filter.
-
-        Parameters
-        ----------
-
-        dim_x : int
-            Number of state variables for the filter. For example, if
-            you are tracking the position and velocity of an object in two
-            dimensions, dim_x would be 4.
-
-
-        dim_z : int
-            Number of of measurement inputs. For example, if the sensor
-            provides you with position in (x,y), dim_z would be 2.
-
-        dt : float
-            Time between steps in seconds.
-
-        hx : function(x)
-            Measurement function. Converts state vector x into a measurement
-            vector of shape (dim_z).
-
-        fx : function(x, dt)
-            function that returns the state x transformed by the
-            state transistion function. dt is the time step in seconds.
-
-        x_mean_fn : callable  (sigma_points, weights), optional
-            Function that computes the mean of the provided sigma points
-            and weights. Use this if your state variable contains nonlinear
-            values such as angles which cannot be summed.
-
-            .. code-block:: Python
-
-                def state_mean(sigmas, Wm):
-                    x = np.zeros(3)
-                    sum_sin, sum_cos = 0., 0.
-
-                    for i in range(len(sigmas)):
-                        s = sigmas[i]
-                        x[0] += s[0] * Wm[i]
-                        x[1] += s[1] * Wm[i]
-                        sum_sin += sin(s[2])*Wm[i]
-                        sum_cos += cos(s[2])*Wm[i]
-                    x[2] = atan2(sum_sin, sum_cos)
-                    return x
-
-        z_mean_fn : callable  (sigma_points, weights), optional
-            Same as x_mean_fn, except it is called for sigma points which
-            form the measurements after being passed through hx().
-
-        residual_x : callable (x, y), optional
-        residual_z : callable (x, y), optional
-            Function that computes the residual (difference) between x and y.
-            You will have to supply this if your state variable cannot support
-            subtraction, such as angles (359-1 degreees is 2, not 358). x and y
-            are state vectors, not scalars. One is for the state variable,
-            the other is for the measurement state.
-
-            .. code-block:: Python
-
-                def residual(a, b):
-                    y = a[0] - b[0]
-                    if y > np.pi:
-                        y -= 2*np.pi
-                    if y < -np.pi:
-                        y = 2*np.pi
-                    return y
-
-        compute_log_likelihood : bool (default = True)
-            Computes log likelihood by default, but this can be a slow
-            computation, so if you never use it you can turn this computation
-            off.
-        """
-
         self.Q = eye(dim_x)
         self.R = eye(dim_z)
         self.x = zeros(dim_x)
         self.P = eye(dim_x)
+        self.K = 0
         self._dim_x = dim_x
         self._dim_z = dim_z
         self._dt = dt
@@ -212,6 +242,7 @@ class CubatureKalmanFilter(object):
         self.fx = fx
         self.x_mean = x_mean_fn
         self.z_mean = z_mean_fn
+        self.y = 0
 
 
         if residual_x is None:
@@ -231,9 +262,10 @@ class CubatureKalmanFilter(object):
 
         self.compute_log_likelihood = compute_log_likelihood
         self.log_likelihood = math.log(sys.float_info.min)
+        self.likelihood = sys.float_info.min
 
 
-    def predict(self, dt=None,  fx_args=()):
+    def predict(self, dt=None, fx_args=()):
         r""" Performs the predict step of the CKF. On return, self.x and
         self.P contain the predicted state (x) and covariance (P).
 
@@ -263,7 +295,6 @@ class CubatureKalmanFilter(object):
         # evaluate cubature points
         for k in range(self._num_sigmas):
             self.sigmas_f[k] = self.fx(sigmas[k], dt, *fx_args)
-
 
         self.x, self.P = ckf_transform(self.sigmas_f, self.Q)
 
@@ -312,7 +343,7 @@ class CubatureKalmanFilter(object):
         zpf = zp.flatten()
         for k in range(m):
             dx = self.sigmas_f[k] - xf
-            dz =  self.sigmas_h[k] - zpf
+            dz = self.sigmas_h[k] - zpf
             Pxz += outer(dx, dz)
 
         Pxz /= m
@@ -325,23 +356,23 @@ class CubatureKalmanFilter(object):
 
         if self.compute_log_likelihood:
             self.log_likelihood = logpdf(x=self.y, cov=Pz)
+            self.likelihood = math.exp(self.log_likelihood)
+            if self.likelihood == 0:
+                self.likelihood = sys.float_info.min
 
 
-    @property
-    def likelihood(self):
-        """
-        likelihood of last measurment.
-
-        Computed from the log-likelihood. The log-likelihood can be very
-        small,  meaning a large negative value such as -28000. Taking the
-        exp() of that results in 0.0, which can break typical algorithms
-        which multiply by this value, so by default we always return a
-        number >= sys.float_info.min.
-
-        But really, this is a bad measure because of the scaling that is
-        involved - try to use log-likelihood in your equations!"""
-
-        lh = math.exp(self.log_likelihood)
-        if lh == 0:
-             lh = sys.float_info.min
-        return lh
+    def __repr__(self):
+        return '\n'.join([
+            'CubatureKalmanFilter object',
+            pretty_str('dim_x', self._dim_x),
+            pretty_str('dim_z', self._dim_z),
+            pretty_str('dt', self._dt),
+            pretty_str('x', self.x),
+            pretty_str('P', self.P),
+            pretty_str('Q', self.Q),
+            pretty_str('R', self.R),
+            pretty_str('K', self.K),
+            pretty_str('y', self.y),
+            pretty_str('log-likelihood', self.log_likelihood),
+            pretty_str('likelihood', self.likelihood)
+            ])

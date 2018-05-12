@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=invalid-name, too-many-instance-attributes, too-few-public-methods
+
+# disable snake_case warning, too many arguments, too many attributes,
+# one space before assignment, too few public methods
+
 
 """Copyright 2015 Roger R Labbe Jr.
 
@@ -18,6 +23,7 @@ for more information.
 from __future__ import (absolute_import, division)
 import numpy as np
 from numpy import dot, zeros
+from filterpy.common import pretty_str
 
 
 class IMMEstimator(object):
@@ -64,7 +70,8 @@ class IMMEstimator(object):
 
         """
 
-        assert len(filters) > 1
+        if len(filters) < 1:
+            raise ValueError('filters must contain at least one filter')
 
         self.filters = filters
         self.mu = mu
@@ -74,13 +81,14 @@ class IMMEstimator(object):
         x_shape = filters[0].x.shape
         try:
             n_states = x_shape[0]
-        except:
+        except AttributeError:
             n_states = x_shape
 
         self.x = np.zeros(x_shape)
         self.P = np.zeros((n_states, n_states))
-
         self.N = len(filters) # number of filters
+        self.cbar = 0.
+        self.likelihood = 0
 
 
     def update(self, z, u=None):
@@ -97,6 +105,7 @@ class IMMEstimator(object):
         u : np.array, optional
             u[i] contains the control input for the ith filter
         """
+        #pylint: disable=too-many-locals
 
         # run update on each filter, and save the likelihood in L
         L = zeros(len(self.filters))
@@ -152,5 +161,19 @@ class IMMEstimator(object):
             self.P += w * (np.outer(y, y) + f.P)
 
         # update mode probabilities from total probability * likelihood
-        self.mu =  self.cbar * L
+        self.mu = self.cbar * L
         self.mu /= sum(self.mu) # normalize
+        self.likelihood = L
+
+
+    def __repr__(self):
+        return '\n'.join([
+            'IMMEstimator object',
+            pretty_str('N', self.N),
+            pretty_str('x', self.x),
+            pretty_str('P', self.P),
+            pretty_str('mu', self.mu),
+            pretty_str('M', self.M),
+            pretty_str('cbar', self.cbar),
+            pretty_str('likelihood', self.likelihood),
+            ])

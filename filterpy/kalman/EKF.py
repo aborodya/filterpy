@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=invalid-name,too-many-instance-attributes, too-many-arguments
+
 
 """Copyright 2015 Roger R Labbe Jr.
 
@@ -16,12 +18,14 @@ for more information.
 """
 
 from __future__ import (absolute_import, division, unicode_literals)
+
+import sys
 import math
 import numpy as np
 from numpy import dot, zeros, eye
 import scipy.linalg as linalg
-import sys
 from filterpy.stats import logpdf
+from filterpy.common import pretty_str
 
 
 class ExtendedKalmanFilter(object):
@@ -39,6 +43,25 @@ class ExtendedKalmanFilter(object):
     allows the linear algebra to work, but are the wrong shape for the problem
     you are trying to solve.
 
+    Parameters
+    ----------
+
+    dim_x : int
+        Number of state variables for the Kalman filter. For example, if
+        you are tracking the position and velocity of an object in two
+        dimensions, dim_x would be 4.
+
+        This is used to set the default size of P, Q, and u
+
+    dim_z : int
+        Number of of measurement inputs. For example, if the sensor
+        provides you with position in (x,y), dim_z would be 2.
+
+    compute_log_likelihood : bool (default = True)
+        Computes log likelihood by default, but this can be a slow
+        computation, so if you never use it you can turn this computation
+        off.
+
     Attributes
     ----------
     x : numpy.array(dim_x, 1)
@@ -46,6 +69,12 @@ class ExtendedKalmanFilter(object):
 
     P : numpy.array(dim_x, dim_x)
         Covariance matrix
+
+    x_prior : numpy.array(dim_x, 1)
+        Prior (predicted) state estimate
+
+    P_prior : numpy.array(dim_x, dim_x)
+        Prior (predicted) state covariance matrix
 
     R : numpy.array(dim_z, dim_z)
         Measurement noise matrix
@@ -71,6 +100,15 @@ class ExtendedKalmanFilter(object):
     log_likelihood : float
         log-likelihood of the last measurement. Read only.
 
+    likelihood : float
+        likelihood of last measurment. Read only.
+
+        Computed from the log-likelihood. The log-likelihood can be very
+        small,  meaning a large negative value such as -28000. Taking the
+        exp() of that results in 0.0, which can break typical algorithms
+        which multiply by this value, so by default we always return a
+        number >= sys.float_info.min.
+
     Examples
     --------
 
@@ -79,47 +117,18 @@ class ExtendedKalmanFilter(object):
     """
 
     def __init__(self, dim_x, dim_z, dim_u=0, compute_log_likelihood=True):
-        """ Extended Kalman filter. You are responsible for setting the
-        various state variables to reasonable values; the defaults below will
-        not give you a functional filter.
-
-        Examples
-        --------
-
-        See the EKF chapter in my book Kalman and Bayesian Filters in Python
-        https://github.com/rlabbe/Kalman-and-Bayesian-Filters-in-Python/blob/master/11-Extended-Kalman-Filters.ipynb
-
-        Parameters
-        ----------
-
-        dim_x : int
-            Number of state variables for the Kalman filter. For example, if
-            you are tracking the position and velocity of an object in two
-            dimensions, dim_x would be 4.
-
-            This is used to set the default size of P, Q, and u
-
-        dim_z : int
-            Number of of measurement inputs. For example, if the sensor
-            provides you with position in (x,y), dim_z would be 2.
-
-        compute_log_likelihood : bool (default = True)
-            Computes log likelihood by default, but this can be a slow
-            computation, so if you never use it you can turn this computation
-            off.
-        """
 
         self.dim_x = dim_x
         self.dim_z = dim_z
         self.dim_u = dim_u
 
-        self.x = zeros((dim_x,1)) # state
-        self.P = eye(dim_x)       # uncertainty covariance
-        self.B = 0                # control transition matrix
-        self.F = 0                # state transition matrix
-        self.R = eye(dim_z)       # state uncertainty
-        self.Q = eye(dim_x)       # process uncertainty
-        self.y = zeros((dim_z, 1))
+        self.x = zeros((dim_x, 1)) # state
+        self.P = eye(dim_x)        # uncertainty covariance
+        self.B = 0                 # control transition matrix
+        self.F = np.eye(dim_x)     # state transition matrix
+        self.R = eye(dim_z)        # state uncertainty
+        self.Q = eye(dim_x)        # process uncertainty
+        self.y = zeros((dim_z, 1)) # residual
 
         # gain and residual are computed during the innovation step. We
         # save them so that in case you want to inspect them for various
@@ -134,6 +143,11 @@ class ExtendedKalmanFilter(object):
 
         self.compute_log_likelihood = compute_log_likelihood
         self.log_likelihood = math.log(sys.float_info.min)
+        self.likelihood = sys.float_info.min
+
+        # Priors. Will always be a copy of x, P after predict() is called.
+        self.x_prior = np.copy(self.x)
+        self.P_prior = np.copy(self.P)
 
 
     def predict_update(self, z, HJacobian, Hx, args=(), hx_args=(), u=0):
@@ -168,6 +182,7 @@ class ExtendedKalmanFilter(object):
         u : np.array or scalar
             optional control vector input to the filter.
         """
+        #pylint: disable=too-many-locals
 
         if not isinstance(args, tuple):
             args = (args,)
@@ -191,10 +206,14 @@ class ExtendedKalmanFilter(object):
         x = dot(F, x) + dot(B, u)
         P = dot(F, P).dot(F.T) + Q
 
+        # save prior
+        self.x_prior = np.copy(self.x)
+        self.P_prior = np.copy(self.P)
+
         # update step
         PHT = dot(P, H.T)
         self.S = dot(H, PHT) + R
-        self.K = PHT.dot(linalg.inv (self.S))
+        self.K = dot(PHT, linalg.inv(self.S))
 
         self.y = z - Hx(x, *hx_args)
         self.x = x + dot(self.K, self.y)
@@ -204,6 +223,9 @@ class ExtendedKalmanFilter(object):
 
         if self.compute_log_likelihood:
             self.log_likelihood = logpdf(x=self.y, cov=self.S)
+            self.likelihood = math.exp(self.log_likelihood)
+            if self.likelihood == 0:
+                self.likelihood = sys.float_info.min
 
 
     def update(self, z, HJacobian, Hx, R=None, args=(), hx_args=(),
@@ -269,28 +291,37 @@ class ExtendedKalmanFilter(object):
         self.S = dot(H, PHT) + R
         self.K = PHT.dot(linalg.inv(self.S))
 
-        hx =  Hx(self.x, *hx_args)
+        hx = Hx(self.x, *hx_args)
         self.y = residual(z, hx)
         self.x = self.x + dot(self.K, self.y)
 
+        # P = (I-KH)P(I-KH)' + KRK' is more numerically stable
+        # and works for non-optimal K vs the equation
+        # P = (I-KH)P usually seen in the literature.
         I_KH = self._I - dot(self.K, H)
         self.P = dot(I_KH, self.P).dot(I_KH.T) + dot(self.K, R).dot(self.K.T)
 
         if self.compute_log_likelihood:
             self.log_likelihood = logpdf(x=self.y, cov=self.S)
+            self.likelihood = math.exp(self.log_likelihood)
+            if self.likelihood == 0:
+                self.likelihood = sys.float_info.min
 
 
     def predict_x(self, u=0):
-        """ predicts the next state of X. If you need to
+        """
+        Predicts the next state of X. If you need to
         compute the next state yourself, override this function. You would
         need to do this, for example, if the usual Taylor expansion to
-        generate F is not providing accurate results for you. """
-
+        generate F is not providing accurate results for you.
+        """
         self.x = dot(self.F, self.x) + dot(self.B, u)
 
 
     def predict(self, u=0):
-        """ Predict next position.
+        """
+        Predict next state (prior) using the Kalman filter state propagation
+        equations.
 
         Parameters
         ----------
@@ -303,22 +334,24 @@ class ExtendedKalmanFilter(object):
         self.predict_x(u)
         self.P = dot(self.F, self.P).dot(self.F.T) + self.Q
 
+        # save prior
+        self.x_prior = np.copy(self.x)
+        self.P_prior = np.copy(self.P)
 
-    @property
-    def likelihood(self):
-        """
-        likelihood of last measurment.
 
-        Computed from the log-likelihood. The log-likelihood can be very
-        small,  meaning a large negative value such as -28000. Taking the
-        exp() of that results in 0.0, which can break typical algorithms
-        which multiply by this value, so by default we always return a
-        number >= sys.float_info.min.
-
-        But really, this is a bad measure because of the scaling that is
-        involved - try to use log-likelihood in your equations!"""
-
-        lh = math.exp(self.log_likelihood)
-        if lh == 0:
-             lh = sys.float_info.min
-        return lh
+    def __repr__(self):
+        return '\n'.join([
+            'KalmanFilter object',
+            pretty_str('x', self.x),
+            pretty_str('P', self.P),
+            pretty_str('x_prior', self.x_prior),
+            pretty_str('P_prior', self.P_prior),
+            pretty_str('F', self.F),
+            pretty_str('Q', self.Q),
+            pretty_str('R', self.R),
+            pretty_str('K', self.K),
+            pretty_str('y', self.y),
+            pretty_str('S', self.S),
+            pretty_str('likelihood', self.likelihood),
+            pretty_str('log-likelihood', self.log_likelihood)
+            ])
