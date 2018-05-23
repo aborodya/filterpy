@@ -18,7 +18,7 @@ prediction is called the *prior*, which you can think of collequally
 as the estimate prior to incorporating the measurement.
 
 The update step, implemented with the method or function `update()`,
-incoporates the measurement z with covariance R, into the state
+incorporates the measurement z with covariance R, into the state
 estimate (x, P). The class stores the system uncertainty in S,
 the innovation (residual between prediction and measurement in
 measurement space) in y, and the Kalman gain in k. The procedural
@@ -26,7 +26,7 @@ form returns these variables to you. In Bayesian terms this computes
 the *posterior* - the estimate after the information from the
 measurement is incorporated.
 
-Whether you use the OO form or procedureal form is up to you. If
+Whether you use the OO form or procedural form is up to you. If
 matrices such as H, R, and F are changing each epoch, you'll probably
 opt to use the procedural form. If they are unchanging, the OO
 form is perhaps easier to use since you won't need to keep track
@@ -192,7 +192,7 @@ class KalmanFilter(object):
         Kalman gain of the update step. Read only.
 
     S :  numpy.array
-        Systen uncertaintly projected to measurement space. Read only.
+        System uncertainty projected to measurement space. Read only.
 
     z : ndarray
         Last measurement used in update(). Read only.
@@ -201,7 +201,7 @@ class KalmanFilter(object):
         log-likelihood of the last measurement. Read only.
 
     likelihood : float
-        likelihood of last measurment. Read only.
+        likelihood of last measurement. Read only.
 
         Computed from the log-likelihood. The log-likelihood can be very
         small,  meaning a large negative value such as -28000. Taking the
@@ -209,9 +209,16 @@ class KalmanFilter(object):
         which multiply by this value, so by default we always return a
         number >= sys.float_info.min.
 
+    mahalanobis : float
+        mahalanobis distance of the innovation. Read only.
+
     inv : function, default numpy.linalg.inv
         If you prefer another inverse function, such as the Moore-Penrose
         pseudo inverse, set it to that instead: kf.inv = np.linalg.pinv
+
+        This is only used to invert self.S. If you know it is diagonal, you
+        might choose to set it to filterpy.common.inv_diagonal, which is
+        several times faster than numpy.linalg.inv for diagonal matrices.
 
     Examples
     --------
@@ -220,14 +227,13 @@ class KalmanFilter(object):
     https://github.com/rlabbe/Kalman-and-Bayesian-Filters-in-Python
     """
 
-
-    def __init__(self, dim_x, dim_z, dim_u=0, compute_log_likelihood=True):
+    def __init__(self, dim_x, dim_z, dim_u=0):
         if dim_z < 1:
             raise ValueError('dim_x must be 1 or greater')
         if dim_z < 1:
-            raise ValueError('dim_x must be 1 or greater')
+            raise ValueError('dim_z must be 1 or greater')
         if dim_u < 0:
-            raise ValueError('dim_x must be 0 or greater')
+            raise ValueError('dim_u must be 0 or greater')
 
         self.dim_x = dim_x
         self.dim_z = dim_z
@@ -251,17 +257,23 @@ class KalmanFilter(object):
         self.K = np.zeros((dim_x, dim_z)) # kalman gain
         self.y = zeros((dim_z, 1))
         self.S = np.zeros((dim_z, dim_z)) # system uncertainty
+        self.SI = np.zeros((dim_z, dim_z)) # inverse system uncertainty
 
         # identity matrix. Do not alter this.
         self._I = np.eye(dim_x)
 
         # these will always be a copy of x,P after predict() is called
-        self.x_prior = np.copy(self.x)
-        self.P_prior = np.copy(self.P)
+        self.x_prior = self.x.copy()
+        self.P_prior = self.P.copy()
 
-        self.compute_log_likelihood = compute_log_likelihood
-        self.log_likelihood = math.log(sys.float_info.min)
-        self.likelihood = sys.float_info.min
+        # these will always be a copy of x,P after update() is called
+        self.x_post = self.x.copy()
+        self.P_post = self.P.copy()
+
+        # Only computed only if requested via property
+        self._log_likelihood = math.log(sys.float_info.min)
+        self._likelihood = sys.float_info.min
+        self._mahalanobis = None
 
         self.inv = np.linalg.inv
 
@@ -310,8 +322,8 @@ class KalmanFilter(object):
         self.P = self._alpha_sq * dot(dot(F, self.P), F.T) + Q
 
         # save prior
-        self.x_prior = np.copy(self.x)
-        self.P_prior = np.copy(self.P)
+        self.x_prior = self.x.copy()
+        self.P_prior = self.P.copy()
 
 
     def update(self, z, R=None, H=None):
@@ -357,10 +369,10 @@ class KalmanFilter(object):
         # S = HPH' + R
         # project system uncertainty into measurement space
         self.S = dot(H, PHT) + R
-
+        self.SI = self.inv(self.S)
         # K = PH'inv(S)
         # map system uncertainty into kalman gain
-        self.K = dot(PHT, self.inv(self.S))
+        self.K = dot(PHT, self.SI)
 
         # x = x + Ky
         # predict new x with residual scaled by the kalman gain
@@ -374,13 +386,31 @@ class KalmanFilter(object):
         I_KH = self._I - dot(self.K, H)
         self.P = dot(dot(I_KH, self.P), I_KH.T) + dot(dot(self.K, R), self.K.T)
 
-        self.z = np.copy(z) # save the measurement
+        self.z = z.copy() # save the measurement
 
-        if self.compute_log_likelihood:
-            self.log_likelihood = logpdf(x=self.y, cov=self.S)
-            self.likelihood = math.exp(self.log_likelihood)
-            if self.likelihood == 0:
-                self.likelihood = sys.float_info.min
+        self.x_post = self.x.copy()
+        self.P_post = self.P.copy()
+
+        # set to None to force recompute
+        self._log_likelihood = None
+        self._likelihood = None
+        self._mahalanobis = None
+
+
+    @property
+    def log_likelihood(self):
+        if self._log_likelihood is None:
+            self._log_likelihood = logpdf(x=self.y, cov=self.S)
+        return self._log_likelihood
+
+
+    @property
+    def likelihood(self):
+        if self._likelihood is None:
+            self._likelihood = math.exp(self.log_likelihood)
+            if self._likelihood == 0:
+                self._likelihood = sys.float_info.min
+        return self._likelihood
 
 
     def predict_steadystate(self, u=0, B=None):
@@ -412,8 +442,8 @@ class KalmanFilter(object):
             self.x = dot(self.F, self.x)
 
         # save prior
-        self.x_prior = np.copy(self.x)
-        self.P_prior = np.copy(self.P)
+        self.x_prior = self.x.copy()
+        self.P_prior = self.P.copy()
 
 
     def update_steadystate(self, z):
@@ -469,20 +499,20 @@ class KalmanFilter(object):
         # error (residual) between measurement and prediction
         self.y = z - dot(self.H, self.x)
 
-        if self.compute_log_likelihood:
-            S = dot(dot(self.H, self.P), self.H.T) + self.R
 
         # x = x + Ky
         # predict new x with residual scaled by the kalman gain
         self.x = self.x + dot(self.K, self.y)
 
-        self.z = np.copy(z) # save the measurement
+        self.z = z.copy() # save the measurement
 
-        if self.compute_log_likelihood:
-            self.log_likelihood = logpdf(x=self.y, cov=S)
-            self.likelihood = math.exp(self.log_likelihood)
-            if self.likelihood == 0:
-                self.likelihood = sys.float_info.min
+        self.x_post = self.x.copy()
+        self.P_post = self.P.copy()
+
+        # set to None to force recompute
+        self._log_likelihood = None
+        self._likelihood = None
+        self._mahalanobis = None
 
 
     def update_correlated(self, z, R=None, H=None):
@@ -538,24 +568,25 @@ class KalmanFilter(object):
 
         # project system uncertainty into measurement space
         self.S = dot(H, PHT) + dot(H, self.M) + dot(self.M.T, H.T) + R
+        self.SI = self.inv(self.S)
 
         # K = PH'inv(S)
         # map system uncertainty into kalman gain
-        self.K = dot(PHT + self.M, self.inv(self.S))
+        self.K = dot(PHT + self.M, self.SI)
 
         # x = x + Ky
         # predict new x with residual scaled by the kalman gain
         self.x = self.x + dot(self.K, self.y)
         self.P = self.P - dot(self.K, dot(H, self.P) + self.M.T)
 
-        self.z = np.copy(z) # save the measurement
+        self.z = z.copy() # save the measurement
+        self.x_post = self.x.copy()
+        self.P_post = self.P.copy()
 
-        if self.compute_log_likelihood:
-            self.log_likelihood = logpdf(x=self.y, cov=self.S)
-            self.likelihood = math.exp(self.log_likelihood)
-            if self.likelihood == 0:
-                self.likelihood = sys.float_info.min
-
+        # set to None to force recompute
+        self._log_likelihood = None
+        self._likelihood = None
+        self._mahalanobis = None
 
 
     def batch_filter(self, zs, Fs=None, Qs=None, Hs=None,
@@ -762,7 +793,7 @@ class KalmanFilter(object):
         return (means, covariances, means_p, covariances_p)
 
 
-    def rts_smoother(self, Xs, Ps, Fs=None, Qs=None):
+    def rts_smoother(self, Xs, Ps, Fs=None, Qs=None, inv=np.linalg.inv):
         """
         Runs the Rauch-Tung-Striebal Kalman smoother on a set of
         means and covariances computed by a Kalman filter. The usual input
@@ -785,6 +816,11 @@ class KalmanFilter(object):
         Qs : list-like collection of numpy.array, optional
             Process noise of the Kalman filter at each time step. Optional,
             if not provided the filter's self.Q will be used
+
+        inv : function, default numpy.linalg.inv
+            If you prefer another inverse function, such as the Moore-Penrose
+            pseudo inverse, set it to that instead: kf.inv = np.linalg.pinv
+
 
         Returns
         -------
@@ -832,7 +868,7 @@ class KalmanFilter(object):
             Pp[k] = dot(dot(Fs[k+1], P[k]), Fs[k+1].T) + Qs[k+1]
 
             #pylint: disable=bad-whitespace
-            K[k]  = dot(dot(P[k], Fs[k+1].T), self.inv(Pp[k]))
+            K[k]  = dot(dot(P[k], Fs[k+1].T), inv(Pp[k]))
             x[k] += dot(K[k], x[k+1] - dot(Fs[k+1], x[k]))
             P[k] += dot(dot(K[k], P[k+1] - Pp[k]), K[k].T)
 
@@ -942,6 +978,21 @@ class KalmanFilter(object):
 
 
     @property
+    def mahalanobis(self):
+        """"
+        Mahalanobis distance of innovation. E.g. 3 means measurement
+        was 3 standard deviations away from the predicted value.
+
+        Returns
+        -------
+        mahalanobis : float
+        """
+        if self._mahalanobis is None:
+            self._mahalanobis = float(np.dot(np.dot(self.y.T, self.SI), self.y))
+        return self._mahalanobis
+
+
+    @property
     def alpha(self):
         """
         Fading memory setting. 1.0 gives the normal Kalman filter, and
@@ -990,6 +1041,8 @@ class KalmanFilter(object):
             pretty_str('P', self.P),
             pretty_str('x_prior', self.x_prior),
             pretty_str('P_prior', self.P_prior),
+            pretty_str('x_post', self.x_post),
+            pretty_str('P_post', self.P_post),
             pretty_str('F', self.F),
             pretty_str('Q', self.Q),
             pretty_str('R', self.R),
@@ -997,6 +1050,7 @@ class KalmanFilter(object):
             pretty_str('K', self.K),
             pretty_str('y', self.y),
             pretty_str('S', self.S),
+            pretty_str('SI', self.SI),
             pretty_str('M', self.M),
             pretty_str('B', self.B),
             pretty_str('z', self.z),

@@ -20,6 +20,7 @@ for more information.
 from __future__ import print_function
 from collections import defaultdict
 import copy
+import inspect
 from itertools import repeat
 import numpy as np
 
@@ -108,6 +109,11 @@ class Saver(object):
         self._ignore = ignore
         self._len = 0
 
+        # need to save all properties since it is possible that the property
+        # is computed only on access. I use this trick a lot to minimize
+        # computing unused information.
+        self.properties = inspect.getmembers(type(kf), lambda o: isinstance(o, property))
+
         if save_current:
             self.save()
 
@@ -115,7 +121,15 @@ class Saver(object):
     def save(self):
         """ save the current state of the Kalman filter"""
 
+
         kf = self._kf
+
+        # force all attributes to be computed. this is only necessary
+        # if the class uses properties that compute data only when
+        # accessed
+        for prop in self.properties:
+            self._DL[prop[0]].append(getattr(kf, prop[0]))
+
         v = copy.deepcopy(kf.__dict__)
 
         if self._skip_private:
@@ -293,7 +307,8 @@ def reshape_z(z, dim_z, ndim):
 
 
 def repeated_array(val, N):
-    """ User can specify either a single value, or a list/array of N values.
+    """
+    User can specify either a single value, or a list/array of N values.
     If a single value, create an iterable list to return that value
     repeatedly.
     """
@@ -303,3 +318,44 @@ def repeated_array(val, N):
             return val
 
     return repeat(val, N)
+
+
+def inv_diagonal(S):
+    """
+    Computes the inverse of a diagonal NxN np.array S. In general this will
+    be much faster than calling np.linalg.inv().
+
+    However, does NOT check if the off diagonal elements are non-zero. So long
+    as S is truly diagonal, the output is identical to np.linalg.inv().
+
+    Parameters
+    ----------
+    S : np.array
+        diagonal NxN array to take inverse of
+
+    Returns
+    -------
+    S_inv : np.array
+        inverse of S
+
+
+    Examples
+    --------
+
+    This is meant to be used as a replacement inverse function for
+    the KalmanFilter class when you know the system covariance S is
+    diagonal. It just makes the filter run faster, there is
+
+    >>> kf = KalmanFilter(dim_x=3, dim_z=1)
+    >>> kf.inv = inv_diagonal  # S is 1x1, so safely diagonal
+    """
+
+    S = np.asarray(S)
+
+    if S.ndim != 2 or S.shape[0] != S.shape[1]:
+        raise ValueError('S must be a square Matrix')
+
+    si = np.zeros(S.shape)
+    for i in range(len(S)):
+        si[i, i] = 1. / S[i, i]
+    return si
