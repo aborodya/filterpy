@@ -21,7 +21,6 @@ from __future__ import print_function
 from collections import defaultdict
 import copy
 import inspect
-from itertools import repeat
 import numpy as np
 
 
@@ -209,6 +208,11 @@ class Saver(object):
                 pass
 
 
+    def __repr__(self):
+        return '<Saver object at {}\n  Keys: {}>'.format(
+                hex(id(self)),
+                ' '.join(self.keys))
+
 
 def runge_kutta4(y, x, dx, f):
     """computes 4th order Runge-Kutta for dy/dx.
@@ -261,10 +265,8 @@ def pretty_str(label, arr):
         except (AttributeError, IndexError):
             return False
 
-    transposed = False
     if is_col(arr):
-        arr = arr.T
-        transposed = True
+        return str(arr.T).replace('\n', '') + '.T'
 
     rows = str(arr).split('\n')
     if not rows:
@@ -277,12 +279,7 @@ def pretty_str(label, arr):
         label += ' = '
 
     s = label + rows[0]
-    if transposed:
-        s += '.T'
-        return s
-
     pad = ' ' * len(label)
-
     for line in rows[1:]:
         s = s + '\n' + pad + line
 
@@ -324,20 +321,6 @@ def reshape_z(z, dim_z, ndim):
         z = z[0, 0]
 
     return z
-
-
-def repeated_array(val, N):
-    """
-    User can specify either a single value, or a list/array of N values.
-    If a single value, create an iterable list to return that value
-    repeatedly.
-    """
-
-    shape = np.shape(val)
-    if len(shape) > 1 and shape[0] == N:
-            return val
-
-    return repeat(val, N)
 
 
 def inv_diagonal(S):

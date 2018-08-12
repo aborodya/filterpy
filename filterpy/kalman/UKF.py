@@ -26,7 +26,7 @@ from numpy import eye, zeros, dot, isscalar, outer
 from scipy.linalg import cholesky
 from filterpy.kalman import unscented_transform
 from filterpy.stats import logpdf
-from filterpy.common import pretty_str, repeated_array
+from filterpy.common import pretty_str
 
 
 class UnscentedKalmanFilter(object):
@@ -278,8 +278,7 @@ class UnscentedKalmanFilter(object):
     def __init__(self, dim_x, dim_z, dt, hx, fx, points,
                  sqrt_fn=None, x_mean_fn=None, z_mean_fn=None,
                  residual_x=None,
-                 residual_z=None,
-                 compute_log_likelihood=True):
+                 residual_z=None):
         """
         Create a Kalman filter. You are responsible for setting the
         various state variables to reasonable values; the defaults below will
@@ -520,9 +519,6 @@ class UnscentedKalmanFilter(object):
 
             If Rs is None then self.R is used for all epochs.
 
-            If Rs contains a single matrix, then it is used as H for all
-            epochs.
-
             If it is a list of matrices or a 3D array where
             len(Rs) == len(zs), then it is treated as a list of R values, one
             per epoch. This allows you to have varying R per epoch.
@@ -531,9 +527,6 @@ class UnscentedKalmanFilter(object):
             optional value or list of delta time to be passed into predict.
 
             If dtss is None then self.dt is used for all epochs.
-
-            If dts contains a single matrix, then it is used as dt for all
-            epochs.
 
             If it is a list where len(dts) == len(zs), then it is treated as a
             list of dt values, one per epoch. This allows you to have varying
@@ -593,13 +586,10 @@ class UnscentedKalmanFilter(object):
 
         z_n = np.size(zs, 0)
         if Rs is None:
-            Rs = self.R
+            Rs = [self.R] * z_n
 
         if dts is None:
-            dts = self._dt
-
-        Rs = repeated_array(Rs, z_n)
-        dts = repeated_array(dts, z_n)
+            dts = [self._dt] * z_n
 
         # mean estimates from Kalman Filter
         if self.x.ndim == 1:
@@ -621,7 +611,7 @@ class UnscentedKalmanFilter(object):
 
         return (means, covariances)
 
-    def rts_smoother(self, Xs, Ps, Qs=None, dts=None):
+    def rts_smoother(self, Xs, Ps, Qs=None, dts=None, UT=None):
         """
         Runs the Rauch-Tung-Striebal Kalman smoother on a set of
         means and covariances computed by the UKF. The usual input
@@ -646,6 +636,12 @@ class UnscentedKalmanFilter(object):
             If float, then the same time step is used for all steps. If
             an array, then each element k contains the time  at step k.
             Units are seconds.
+
+        UT : function(sigmas, Wm, Wc, noise_cov), optional
+            Optional function to compute the unscented transform for the sigma
+            points passed through hx. Typically the default function will
+            work - you can use x_mean_fn and z_mean_fn to alter the behavior
+            of the unscented transform.
 
         Returns
         -------
@@ -684,6 +680,9 @@ class UnscentedKalmanFilter(object):
         if Qs is None:
             Qs = [self.Q] * n
 
+        if UT is None:
+            UT = unscented_transform
+
         # smoother gain
         Ks = zeros((n, dim_x, dim_x))
 
@@ -698,7 +697,7 @@ class UnscentedKalmanFilter(object):
             for i in range(num_sigmas):
                 sigmas_f[i] = self.fx(sigmas[i], dts[k])
 
-            xb, Pb = unscented_transform(
+            xb, Pb = UT(
                 sigmas_f, self.Wm, self.Wc, self.Q,
                 self.x_mean, self.residual_x)
 

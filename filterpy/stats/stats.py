@@ -28,8 +28,6 @@ import math
 from math import cos, sin
 import random
 import warnings
-from matplotlib.patches import Ellipse
-import matplotlib.pyplot as plt
 import numpy as np
 from numpy.linalg import inv
 import scipy.linalg as linalg
@@ -52,7 +50,6 @@ except TypeError:
         'implements this keyword',
         DeprecationWarning)
     _support_singular = False
-
 
 
 def _validate_vector(u, dtype=None):
@@ -162,8 +159,7 @@ def logpdf(x, mean=None, cov=1, allow_singular=True):
     return multivariate_normal.logpdf(flat_x, flat_mean, cov)
 
 
-
-def gaussian(x, mean, var):
+def gaussian(x, mean, var, normed=True):
     """
     returns normal distribution (pdf) for x given a Gaussian with the
     specified mean and variance. All must be scalars.
@@ -183,6 +179,9 @@ def gaussian(x, mean, var):
     var : scalar
         Variance of the Gaussian
 
+    norm : bool, default True
+        Normalize the output if the input is an array of values.
+
     Returns
     -------
 
@@ -200,8 +199,12 @@ def gaussian(x, mean, var):
     array([1.34985669e-06, 3.48132630e-05, 3.17455867e-08])
     """
 
-    return (np.exp((-0.5*(np.asarray(x)-mean)**2)/var) /
-            math.sqrt(2*math.pi*var))
+    g = ((2*math.pi*var)**-.5) * np.exp((-0.5*(np.asarray(x)-mean)**2.) / var)
+    if normed and len(np.shape(g)) > 0:
+        g = g / sum(g)
+
+    return g
+
 
 
 def mul(mean1, var1, mean2, var2):
@@ -457,7 +460,6 @@ def multivariate_multiply(m1, c1, m2, c2):
     return M3, C3
 
 
-
 def plot_discrete_cdf(xs, ys, ax=None, xlabel=None, ylabel=None,
                       label=None):
     """
@@ -494,6 +496,8 @@ def plot_discrete_cdf(xs, ys, ax=None, xlabel=None, ylabel=None,
     -------
         axis of plot
     """
+    import matplotlib.pyplot as plt
+
     if ax is None:
         ax = plt.gca()
 
@@ -544,6 +548,8 @@ def plot_gaussian_cdf(mean=0., variance=1.,
     -------
         axis of plot
     """
+    import matplotlib.pyplot as plt
+
     if ax is None:
         ax = plt.gca()
 
@@ -610,6 +616,8 @@ def plot_gaussian_pdf(mean=0.,
     -------
         axis of plot
     """
+
+    import matplotlib.pyplot as plt
 
     if ax is None:
         ax = plt.gca()
@@ -692,7 +700,6 @@ def covariance_ellipse(P, deviations=1):
         raise ValueError('width must be greater than height')
 
     return (orientation, width, height)
-
 
 
 def _eigsorted(cov, asc=True):
@@ -784,6 +791,7 @@ def plot_3d_covariance(mean, cov, std=1.,
     """
 
     from mpl_toolkits.mplot3d import Axes3D
+    import matplotlib.pyplot as plt
 
     # force mean to be a 1d vector no matter its shape when passed in
     mean = np.atleast_2d(mean)
@@ -883,7 +891,6 @@ def plot_covariance_ellipse(
                     show_semiaxis=show_semiaxis, facecolor=facecolor,
                     edgecolor=edgecolor, fc=fc, ec=ec, alpha=alpha,
                     xlim=xlim, ylim=ylim, ls=ls)
-
 
 
 def _std_tuple_of(var=None, std=None, interval=None):
@@ -1010,6 +1017,8 @@ def plot_covariance(
         line style for the edge of the ellipse
     """
 
+    from matplotlib.patches import Ellipse
+    import matplotlib.pyplot as plt
 
     if cov is not None and ellipse is not None:
         raise ValueError('You cannot specify both cov and ellipse')
