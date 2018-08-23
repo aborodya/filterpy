@@ -70,7 +70,7 @@ using the Saver class to save the state of the filter at each epoch.
     saver = Saver(cv)
     for z in range(100):
         cv.predict()
-        cv.update[[z + randn() * r_std])
+        cv.update([z + randn() * r_std])
         saver.save() # save the filter's state
 
     saver.to_array()
@@ -94,7 +94,7 @@ This code implements the same filter using the procedural form
 
     for z in range(100):
         x, P = predict(x, P, F=F, Q=Q)
-        x, P = update[x, P, z=[z + randn() * r_std], R=R, H=H)
+        x, P = update(x, P, z=[z + randn() * r_std], R=R, H=H)
         xs.append(x[0, 0])
     plt.plot(xs)
 
@@ -121,7 +121,7 @@ Copyright 2014-2018 Roger R Labbe Jr.
 from __future__ import absolute_import, division
 
 from copy import deepcopy
-import math
+from math import log, exp, sqrt
 import sys
 import warnings
 import numpy as np
@@ -433,7 +433,7 @@ class KalmanFilter(object):
         self.P_post = self.P.copy()
 
         # Only computed only if requested via property
-        self._log_likelihood = math.log(sys.float_info.min)
+        self._log_likelihood = log(sys.float_info.min)
         self._likelihood = sys.float_info.min
         self._mahalanobis = None
 
@@ -1115,7 +1115,7 @@ class KalmanFilter(object):
         number >= sys.float_info.min.
         """
         if self._likelihood is None:
-            self._likelihood = math.exp(self.log_likelihood)
+            self._likelihood = exp(self.log_likelihood)
             if self._likelihood == 0:
                 self._likelihood = sys.float_info.min
         return self._likelihood
@@ -1131,7 +1131,7 @@ class KalmanFilter(object):
         mahalanobis : float
         """
         if self._mahalanobis is None:
-            self._mahalanobis = float(np.dot(np.dot(self.y.T, self.SI), self.y))
+            self._mahalanobis = sqrt(float(dot(dot(self.y.T, self.SI), self.y)))
         return self._mahalanobis
 
     @property
@@ -1152,7 +1152,7 @@ class KalmanFilter(object):
         incorrect result."""
 
         if z is None:
-            return math.log(sys.float_info.min)
+            return log(sys.float_info.min)
         return logpdf(z, dot(self.H, self.x), self.S)
 
     @alpha.setter
