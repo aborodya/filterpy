@@ -341,16 +341,17 @@ def test_steadystate():
     dim = 7
 
     cv = kinematic_kf(dim=dim, order=5)
+    print(cv)
 
     cv.x[1] = 1.0
 
     for i in range(100):
         cv.predict()
-        cv.update([i]*dim)
+        cv.update([i])
 
     for i in range(100):
         cv.predict_steadystate()
-        cv.update_steadystate([i]*dim)
+        cv.update_steadystate([i])
         # test mahalanobis
         a = np.zeros(cv.y.shape)
         maha = scipy_mahalanobis(a, cv.y, cv.SI)
@@ -627,9 +628,18 @@ def test_z_checks():
     kf.update(np.array([[3, 4]]))
     kf.update(np.array([[3, 4]]).T)
 
+def test_update_correlated():
+    f = const_vel_filter(1.0, x0=2, R_std=1., Q_var=5.1)
+    f.M = np.array([[1], [0]])
+
+    for i in range(10):
+        f.predict()
+        f.update_correlated(3.)
+
 
 if __name__ == "__main__":
-    DO_PLOT = True
+    DO_PLOT = False
+    test_steadystate()
     test_functions()
     test_default_dims()
     test_z_checks()

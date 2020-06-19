@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=invalid-name, too-many-arguments, bad-whitespace
 # pylint: disable=too-many-lines, too-many-locals, len-as-condition
+# pylint: disable=import-outside-toplevel
 
 """Copyright 2015 Roger R Labbe Jr.
 
@@ -1134,12 +1135,12 @@ def rand_student_t(df, mu=0, std=1):
     return x / (math.sqrt(y / df)) + mu
 
 
-def NESS(xs, est_xs, ps):
+def NEES(xs, est_xs, ps):
     """
-    Computes the normalized estimated error squared test on a sequence
+    Computes the normalized estimated error squared (NEES) test on a sequence
     of estimates. The estimates are optimal if the mean error is zero and
     the covariance matches the Kalman filter's covariance. If this holds,
-    then the mean of the NESS should be equal to or less than the dimension
+    then the mean of the NEES should be equal to or less than the dimension
     of x.
 
     Examples
@@ -1149,7 +1150,7 @@ def NESS(xs, est_xs, ps):
 
         xs = ground_truth()
         est_xs, ps, _, _ = kf.batch_filter(zs)
-        NESS(xs, est_xs, ps)
+        NEES(xs, est_xs, ps)
 
     Parameters
     ----------
@@ -1166,13 +1167,13 @@ def NESS(xs, est_xs, ps):
     Returns
     -------
 
-    ness : list of floats
-       list of NESS computed for each estimate
+    errs : list of floats
+       list of NEES computed for each estimate
 
     """
 
     est_err = xs - est_xs
-    ness = []
+    errs = []
     for x, p in zip(est_err, ps):
-        ness.append(np.dot(x.T, linalg.inv(p)).dot(x))
-    return ness
+        errs.append(np.dot(x.T, linalg.inv(p)).dot(x))
+    return errs

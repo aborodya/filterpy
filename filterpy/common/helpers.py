@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-#pylint: disable=invalid-name
+#pylint: disable=invalid-name, bare-except
 
 """Copyright 2015 Roger R Labbe Jr.
 
@@ -308,7 +308,7 @@ def reshape_z(z, dim_z, ndim):
         z = z.T
 
     if z.shape != (dim_z, 1):
-        raise ValueError('z must be convertible to shape ({}, 1)'.format(dim_z))
+        raise ValueError('z (shape {}) must be convertible to shape ({}, 1)'.format(z.shape, dim_z))
 
     if ndim == 1:
         z = z[:, 0]
@@ -361,7 +361,7 @@ def inv_diagonal(S):
 
 
 def outer_product_sum(A, B=None):
-    """
+    r"""
     Computes the sum of the outer products of the rows in A and B
 
         P = \Sum {A[i] B[i].T} for i in 0..N
